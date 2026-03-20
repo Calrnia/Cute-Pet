@@ -130,7 +130,7 @@ body {
     box-shadow: 0 16px 38px rgba(0, 0, 0, 0.42);
     padding: clamp(12px, 1.9vw, 18px);
     display: grid;
-    grid-template-rows: auto minmax(100px, 24dvh) auto auto;
+    grid-template-rows: auto minmax(100px, 24dvh) auto auto auto;
     gap: 10px;
 }
 
@@ -178,6 +178,10 @@ body {
 .btn-row {
     display: grid;
     gap: 10px;
+}
+
+.system-row {
+    grid-template-columns: repeat(3, minmax(100px, 1fr));
 }
 
 #intro-ui {
@@ -234,12 +238,16 @@ button:disabled {
     }
 
     .dialogue-panel {
-        grid-template-rows: auto minmax(94px, 30dvh) auto auto;
+        grid-template-rows: auto minmax(94px, 30dvh) auto auto auto;
     }
 
     #text {
         font-size: clamp(15px, 4.4vw, 18px);
         line-height: 1.72;
+    }
+
+    .system-row {
+        grid-template-columns: repeat(3, minmax(0, 1fr));
     }
 
     #ui {
@@ -258,7 +266,7 @@ button:disabled {
 
 @media (max-height: 760px) {
     .dialogue-panel {
-        grid-template-rows: auto minmax(80px, 34dvh) auto auto;
+        grid-template-rows: auto minmax(80px, 34dvh) auto auto auto;
     }
 
     #rabbit {
@@ -277,6 +285,7 @@ button:disabled {
     <main class="layout">
         <section class="stage">
             <div class="hud">
+                <div class="hud-chip" id="round-chip">Round 1</div>
                 <div class="hud-chip" id="day-chip">Day 1</div>
                 <div class="hud-chip" id="mood-chip">情緒：平靜</div>
             </div>
@@ -287,6 +296,12 @@ button:disabled {
             <div id="speaker" class="speaker">旁白</div>
             <div id="text"></div>
             <div id="hint" class="hint">點擊對話框可快轉</div>
+
+            <div id="system-ui" class="btn-row system-row">
+                <button type="button" onclick="manualSave()">存檔</button>
+                <button type="button" onclick="manualLoad()">讀檔</button>
+                <button type="button" onclick="restartRound()">重開一輪</button>
+            </div>
 
             <div id="intro-ui" class="btn-row">
                 <button id="intro-btn" type="button" onclick="nextIntro()">繼續</button>
@@ -302,6 +317,11 @@ button:disabled {
 </div>
 
 <script>
+const STORAGE_KEYS = {
+    progress: "cutePetProgressV1",
+    manual: "cutePetManualSaveV1"
+};
+
 const introScript = [
     { speaker: "旁白", text: "那天，你只是無聊。" },
     { speaker: "旁白", text: "手機滑到一半，看到一個奇怪的連結。" },
@@ -337,18 +357,24 @@ const hint = document.getElementById("hint");
 const introUi = document.getElementById("intro-ui");
 const introBtn = document.getElementById("intro-btn");
 const ui = document.getElementById("ui");
+const roundChip = document.getElementById("round-chip");
 const dayChip = document.getElementById("day-chip");
 const moodChip = document.getElementById("mood-chip");
 const actionButtons = Array.from(ui.querySelectorAll("button"));
 
+let round = parseInt(localStorage.getItem("round"), 10) || 1;
 let day = parseInt(localStorage.getItem("day"), 10) || 1;
 let affection = parseInt(localStorage.getItem("affection"), 10) || 0;
 let ignored = parseInt(localStorage.getItem("ignored"), 10) || 0;
 let stared = parseInt(localStorage.getItem("stared"), 10) || 0;
+let introMode = localStorage.getItem("introMode") === "0" ? false : true;
+let introIndex = parseInt(localStorage.getItem("introIndex"), 10);
+let endingPlayed = localStorage.getItem("endingPlayed") === "1";
+let hintTimerId = null;
 
-let introMode = true;
-let introIndex = 0;
-let endingPlayed = false;
+if (!Number.isInteger(introIndex)) introIndex = 0;
+if (introIndex < 0) introIndex = 0;
+if (introIndex > introScript.length) introIndex = introScript.length;
 
 const typer = {
     active: false,
@@ -362,10 +388,31 @@ function pick(list) {
     return list[Math.floor(Math.random() * list.length)];
 }
 
+function clampInt(value, fallback, min, max) {
+    const n = Number.parseInt(value, 10);
+    if (!Number.isFinite(n)) return fallback;
+    return Math.min(max, Math.max(min, n));
+}
+
 function setActionDisabled(disabled) {
     actionButtons.forEach((button) => {
         button.disabled = disabled;
     });
+}
+
+function setHintMessage(message, duration = 1800) {
+    hint.innerText = message;
+    if (hintTimerId) {
+        clearTimeout(hintTimerId);
+        hintTimerId = null;
+    }
+
+    if (duration > 0) {
+        hintTimerId = setTimeout(() => {
+            hintTimerId = null;
+            updateHint();
+        }, duration);
+    }
 }
 
 function updateHint() {
@@ -376,6 +423,11 @@ function updateHint() {
 
     if (introMode) {
         hint.innerText = introIndex >= introScript.length ? "按「進入遊戲」開始" : "按「繼續」閱讀";
+        return;
+    }
+
+    if (endingPlayed && day >= 5) {
+        hint.innerText = "你可以讀檔，或直接重開一輪。";
         return;
     }
 
@@ -466,14 +518,39 @@ function moodLabel() {
     return "情緒：平靜";
 }
 
+function buildSnapshot() {
+    return {
+        version: 1,
+        round,
+        day,
+        affection,
+        ignored,
+        stared,
+        introMode,
+        introIndex,
+        endingPlayed,
+        speaker: speaker.innerText,
+        text: text.innerText,
+        rabbit: rabbit.getAttribute("src") || rabbitByState(),
+        introButtonText: introBtn.innerText,
+        savedAt: Date.now()
+    };
+}
+
 function saveState() {
+    localStorage.setItem("round", String(round));
     localStorage.setItem("day", String(day));
     localStorage.setItem("affection", String(affection));
     localStorage.setItem("ignored", String(ignored));
     localStorage.setItem("stared", String(stared));
+    localStorage.setItem("introMode", introMode ? "1" : "0");
+    localStorage.setItem("introIndex", String(introIndex));
+    localStorage.setItem("endingPlayed", endingPlayed ? "1" : "0");
+    localStorage.setItem(STORAGE_KEYS.progress, JSON.stringify(buildSnapshot()));
 }
 
 function updateHud() {
+    roundChip.innerText = "Round " + round;
     dayChip.innerText = "Day " + day;
     moodChip.innerText = moodLabel();
 }
@@ -545,13 +622,17 @@ function showNextIntroLine() {
 
     speaker.innerText = line.speaker;
     typewrite(line.text, "intro");
-
     introBtn.innerText = introIndex >= introScript.length ? "進入遊戲" : "繼續";
+
+    saveState();
 }
 
 function nextIntro() {
     if (!introMode) return;
-    if (finishTyping(true)) return;
+    if (finishTyping(true)) {
+        saveState();
+        return;
+    }
     showNextIntroLine();
 }
 
@@ -560,6 +641,7 @@ function startGame() {
     introUi.hidden = true;
     ui.hidden = false;
     renderGameDialogue();
+    saveState();
 }
 
 function nextDay() {
@@ -589,6 +671,125 @@ function stare() {
     nextDay();
 }
 
+function applySnapshot(snapshot, persist = true) {
+    if (!snapshot || typeof snapshot !== "object") return false;
+
+    round = clampInt(snapshot.round, round, 1, 9999);
+    day = clampInt(snapshot.day, day, 1, 9999);
+    affection = clampInt(snapshot.affection, affection, -9999, 9999);
+    ignored = clampInt(snapshot.ignored, ignored, 0, 9999);
+    stared = clampInt(snapshot.stared, stared, 0, 9999);
+    introMode = Boolean(snapshot.introMode);
+    introIndex = clampInt(snapshot.introIndex, introIndex, 0, introScript.length);
+    endingPlayed = Boolean(snapshot.endingPlayed);
+
+    clearTyperTimer();
+    typer.active = false;
+    typer.context = "none";
+    setActionDisabled(false);
+
+    if (introMode) {
+        introUi.hidden = false;
+        ui.hidden = true;
+        introBtn.innerText = introIndex >= introScript.length ? "進入遊戲" : "繼續";
+    } else {
+        introUi.hidden = true;
+        ui.hidden = false;
+    }
+
+    speaker.innerText = typeof snapshot.speaker === "string" && snapshot.speaker ? snapshot.speaker : "旁白";
+    rabbit.src = typeof snapshot.rabbit === "string" && snapshot.rabbit ? snapshot.rabbit : rabbitByState();
+
+    if (typeof snapshot.text === "string" && snapshot.text.length > 0) {
+        text.innerText = snapshot.text;
+    } else if (introMode) {
+        const previewIndex = Math.max(0, Math.min(introIndex - 1, introScript.length - 1));
+        if (introScript[previewIndex]) {
+            speaker.innerText = introScript[previewIndex].speaker;
+            text.innerText = introScript[previewIndex].text;
+        } else {
+            text.innerText = "";
+        }
+    } else {
+        text.innerText = "第 " + day + " 天\n已讀取進度，請選擇行動。";
+    }
+
+    text.scrollTop = text.scrollHeight;
+    updateHud();
+    updateHint();
+
+    if (persist) saveState();
+    return true;
+}
+
+function manualSave() {
+    if (typer.active) finishTyping(true);
+
+    const snapshot = buildSnapshot();
+    localStorage.setItem(STORAGE_KEYS.manual, JSON.stringify(snapshot));
+    saveState();
+    setHintMessage("已存檔");
+}
+
+function manualLoad() {
+    if (typer.active) finishTyping(true);
+
+    const raw = localStorage.getItem(STORAGE_KEYS.manual);
+    if (!raw) {
+        setHintMessage("目前沒有存檔");
+        return;
+    }
+
+    try {
+        const snapshot = JSON.parse(raw);
+        const ok = applySnapshot(snapshot, true);
+        setHintMessage(ok ? "讀檔完成" : "讀檔失敗");
+    } catch (error) {
+        setHintMessage("存檔損毀，讀檔失敗");
+    }
+}
+
+function restartRound() {
+    if (typer.active) finishTyping(true);
+
+    const confirmed = window.confirm("要開始下一輪嗎？目前回合進度會重置。");
+    if (!confirmed) return;
+
+    round += 1;
+    day = 1;
+    affection = 0;
+    ignored = 0;
+    stared = 0;
+    introMode = true;
+    introIndex = 0;
+    endingPlayed = false;
+
+    introUi.hidden = false;
+    ui.hidden = true;
+    introBtn.innerText = "繼續";
+
+    speaker.innerText = "旁白";
+    rabbit.src = "r1.png";
+
+    updateHud();
+    updateHint();
+    showNextIntroLine();
+    saveState();
+    setHintMessage("第 " + round + " 輪開始");
+}
+
+function restoreFromAutoProgress() {
+    const raw = localStorage.getItem(STORAGE_KEYS.progress);
+    if (!raw) return false;
+
+    try {
+        const snapshot = JSON.parse(raw);
+        return applySnapshot(snapshot, false);
+    } catch (error) {
+        return false;
+    }
+}
+
 text.addEventListener("click", () => {
     if (typer.active) {
         finishTyping(true);
@@ -614,8 +815,16 @@ window.addEventListener("keydown", (event) => {
 
 updateHud();
 updateHint();
-showNextIntroLine();
+
+if (!restoreFromAutoProgress()) {
+    introMode = true;
+    introIndex = 0;
+    introUi.hidden = false;
+    ui.hidden = true;
+    introBtn.innerText = "繼續";
+    showNextIntroLine();
+    saveState();
+}
 </script>
 </body>
 </html>
-
