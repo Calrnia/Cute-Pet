@@ -21,3 +21,5 @@ This project includes a GitHub Actions workflow at `.github/workflows/pages.yml`
 - `index.html` (GitHub Pages entry)
 - `Keep a pet.html` (original working copy)
 - `bg.png`, `r1.png` ... `r6.png` (image assets)
+
+<!-- pages-rebuild: 2026-03-20 -->
