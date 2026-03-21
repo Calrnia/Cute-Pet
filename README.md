@@ -1,6 +1,7 @@
 ﻿# Cute Pet (Galgame Style)
 
 A small browser game with visual-novel style dialogue and multiple rabbit states.
+Thrilling and terrifying.
 
 ## Run locally
 
